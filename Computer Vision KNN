@@ -1,0 +1,460 @@
+# import the necessary packages
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+ 
+
+import argparse
+
+# import the necessary packages
+import numpy as np
+import cv2
+import os
+from pycocotools.coco import COCO # pip install pycocotools
+import pprint
+
+class SimplePreprocessor:
+    def __init__(self, width, height, inter = cv2.INTER_AREA) -> None:
+        # store the target image width, height, and interpolation
+        # method used when resizing
+        self.width = width
+        self.height = height
+        self.inter = inter
+    
+    def preprocess(self, image):
+        # resize image to a fixed size, ignoring the aspect
+        # ratio
+        return(cv2.resize(image, (self.width, self.height), interpolation=self.inter))
+
+class DatasetLoader:
+    def __init__(self, preprocessors=None) -> None:
+        # store the image preprocessor
+        self.preprocessors = preprocessors
+
+        # if the preprocessors are None, initialize them as an
+        # empty list
+        if self.preprocessors is None:
+            self.preprocessors = []
+
+    def load(self, dataDir, filterClasses, verbose=-1):
+        # initialize the list of features and labels
+        data = []
+        labels = []
+
+        ###################################################################
+        ### NEW CODE
+        coco = COCO('{}/annotations/instances_default.json'.format(dataDir))
+
+        # Load the categories in a variable
+        catIDs = coco.getCatIds()
+        cats = coco.loadCats(catIDs)
+
+        pprint.pprint(cats)
+
+        catIds_healthy = coco.getCatIds(catNms=filterClasses['healthy'])
+        catIds_unhealthy = coco.getCatIds(catNms=filterClasses['unhealthy'])
+        # # Fetch class IDs only corresponding to the filterClasses
+        # catIds = coco.getCatIds(catNms=filterClasses) 
+        # # Get all images containing the above Category IDs
+        # imgIds = coco.getImgIds(catIds=catIds)
+
+        # Get unhealthy lemon images
+        data_unhealthy = []
+        labels_unhealthy = []
+        images_unhealthy = []
+        
+        if filterClasses['unhealthy'] != None:
+            # iterate for each individual class in the list
+            for className in filterClasses['unhealthy']:
+                # get all images containing given class
+                catIds = coco.getCatIds(catNms=className)
+                imgIds = coco.getImgIds(catIds=catIds)
+                images_unhealthy += coco.loadImgs(imgIds)
+        
+        else:
+            print("Unexpected situation")
+            assert False
+
+        # Now filter out the repeated images
+        unique_unhealthy_images = []
+
+        for i in range(len(images_unhealthy)):
+            if images_unhealthy[i] not in unique_unhealthy_images:
+                unique_unhealthy_images.append(images_unhealthy[i])
+
+        print("Number of unique images containing unhealthy lemon classes:", len(unique_unhealthy_images))
+
+        for i, im_file in enumerate([h_im['file_name'] for h_im in unique_unhealthy_images]):
+            image = cv2.imread('{}/{}'.format(dataDir, im_file))
+
+            # check to see if our preprocessors are not None
+            if self.preprocessors is not None:
+                # loop over the preprocessors and apply each to
+                # the image
+                for p in self.preprocessors:
+                    image = p.preprocess(image)
+
+            # treat our processed image as a  "feature vector"
+            # by updating the data list followed by the labels
+            data_unhealthy.append(image)
+            labels_unhealthy.append("unhealthy")
+
+            # show an update every 'verbose' images
+            if verbose > 0 and i > 0 and (i+1) % verbose == 0:
+                print("[INFO] processed {}/{}".format(i+1,
+                        len(unique_unhealthy_images)))
+
+        # Get healthy lemon images
+        # We assume healthy lemons are all the other images that are not unhealthy, obtained
+        # from above code.
+        data_healthy = []
+        labels_healthy = []
+        
+        all_imgIds = coco.getImgIds()
+        assert len(set(all_imgIds)) == len(all_imgIds)
+        
+        imgIds_for_unique_unhealthy_images = [img['id'] for img in unique_unhealthy_images]
+        assert len(set(imgIds_for_unique_unhealthy_images)) == len(imgIds_for_unique_unhealthy_images)
+        
+        A = set(all_imgIds)
+        B = set(imgIds_for_unique_unhealthy_images)
+        H = A.difference(B)
+
+        assert len(A) == 2690
+        assert len(B) + len(H) == len(A)
+
+        unique_healthy_images = coco.loadImgs(H)
+
+        print("Number of unique images containing healthy lemon classes:", len(unique_healthy_images))
+
+        for i, im_file in enumerate([h_im['file_name'] for h_im in unique_healthy_images]):
+            image = cv2.imread('{}/{}'.format(dataDir, im_file))
+
+            # check to see if our preprocessors are not None
+            if self.preprocessors is not None:
+                # loop over the preprocessors and apply each to
+                # the image
+                for p in self.preprocessors:
+                    image = p.preprocess(image)
+
+            # treat our processed image as a  "feature vector"
+            # by updating the data list followed by the labels
+            data_healthy.append(image)
+            labels_healthy.append("healthy")
+
+            # show an update every 'verbose' images
+            if verbose > 0 and i > 0 and (i+1) % verbose == 0:
+                print("[INFO] processed {}/{}".format(i+1,
+                        len(unique_healthy_images)))
+        
+        #################################################################################
+
+        data = data_healthy + data_unhealthy
+        labels = labels_healthy + labels_unhealthy
+
+        # return a tuple of the data and labels
+        return(np.array(data), np.array(labels))
+
+# construct the argument parser and parse the arguments
+# ap = argparse.ArgumentParser()
+# ap.add_argument("-d","--dataset", required=True,
+#     help="path to input dataset")
+# ap.add_argument("-k","--neighbors", type=int, default=1,
+#     help="# of nearest neighbors for classification")
+# ap.add_argument("-j","--jobs",type=int, default=-1,
+#     help="# of jobs for k-NN distance (-1 uses all available cores")
+# ap.add_argument("-c","--catalog", required=True,
+#     help="Please provide dataset catalog (COCO?, ImageNet?, etc...)")
+# args = vars(ap.parse_args())
+
+args = {'dataset' : "D:/Users/z3yn3/Desktop/bitirme/Bitirme code/lemon-dataset/lemon-dataset",
+        'neighbors': 2,
+        'jobs': 2,
+        'catalog':'COCO'}
+
+if args["catalog"] == "COCO":
+    
+    # grab the list of images that we'll be describing
+    print("[INFO] loading images...")
+    dataDir = args['dataset']
+
+    healthy_vs_unhealthy = {"healthy": ["condition"],
+                            "unhealthy": ["mould", "gangrene","dark_style_remains"]}
+    
+
+    # initialize the image preprocessor, load the dataset from disk,
+    # and reshape the data matrix
+    sp = SimplePreprocessor(256,256)
+    sdl = DatasetLoader(preprocessors=[sp])
+    (data, labels) = sdl.load(dataDir, healthy_vs_unhealthy, verbose=1)
+    data = data.reshape((data.shape[0]), 256*256*3)
+
+else:
+    raise Exception("{} is a(n) unexpected catalog of data. Program does not know how to handle data from this catalog.".format(args["catalog"]))
+
+# show some information on memory consumption of the images
+print("[INFO] features matrix: {:.1f}MB".format(
+    data.nbytes / (1024*1000.0)))
+
+# encode the labels as integers
+le = LabelEncoder()
+labels = le.fit_transform(labels)
+
+# partition the data into training and testing splits using 75% of
+# the data for training and the remaining 25% for testing
+(trainX, testX, trainY, testY) = train_test_split(data, labels,
+    test_size=0.25, random_state=42)
+
+# train and evaluate a k-NN classifier on the raw pixel intensities
+print("[INFO] evaluating k-NN classifier...")
+model = KNeighborsClassifier(n_neighbors=args["neighbors"],
+    n_jobs=args["jobs"])
+
+model.fit(trainX, trainY)
+print(classification_report(testY, model.predict(testX),
+    target_names=le.classes_))
+
+"""      2
+                 precision    recall  f1-score   support
+
+     healthy       0.80      0.94      0.86       417
+   unhealthy       0.86      0.61      0.72       256
+
+    accuracy                           0.82       673
+   macro avg       0.83      0.78      0.79       673
+weighted avg       0.82      0.82      0.81       673
+
+
+
+"""
+# import the necessary packages
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+ 
+
+import argparse
+
+# import the necessary packages
+import numpy as np
+import cv2
+import os
+from pycocotools.coco import COCO # pip install pycocotools
+import pprint
+
+class SimplePreprocessor:
+    def __init__(self, width, height, inter = cv2.INTER_AREA) -> None:
+        # store the target image width, height, and interpolation
+        # method used when resizing
+        self.width = width
+        self.height = height
+        self.inter = inter
+    
+    def preprocess(self, image):
+        # resize image to a fixed size, ignoring the aspect
+        # ratio
+        return(cv2.resize(image, (self.width, self.height), interpolation=self.inter))
+
+class DatasetLoader:
+    def __init__(self, preprocessors=None) -> None:
+        # store the image preprocessor
+        self.preprocessors = preprocessors
+
+        # if the preprocessors are None, initialize them as an
+        # empty list
+        if self.preprocessors is None:
+            self.preprocessors = []
+
+    def load(self, dataDir, filterClasses, verbose=-1):
+        # initialize the list of features and labels
+        data = []
+        labels = []
+
+        ###################################################################
+        ### NEW CODE
+        coco = COCO('{}/annotations/instances_default.json'.format(dataDir))
+
+        # Load the categories in a variable
+        catIDs = coco.getCatIds()
+        cats = coco.loadCats(catIDs)
+
+        pprint.pprint(cats)
+
+        catIds_healthy = coco.getCatIds(catNms=filterClasses['healthy'])
+        catIds_unhealthy = coco.getCatIds(catNms=filterClasses['unhealthy'])
+        # # Fetch class IDs only corresponding to the filterClasses
+        # catIds = coco.getCatIds(catNms=filterClasses) 
+        # # Get all images containing the above Category IDs
+        # imgIds = coco.getImgIds(catIds=catIds)
+
+        # Get unhealthy lemon images
+        data_unhealthy = []
+        labels_unhealthy = []
+        images_unhealthy = []
+        
+        if filterClasses['unhealthy'] != None:
+            # iterate for each individual class in the list
+            for className in filterClasses['unhealthy']:
+                # get all images containing given class
+                catIds = coco.getCatIds(catNms=className)
+                imgIds = coco.getImgIds(catIds=catIds)
+                images_unhealthy += coco.loadImgs(imgIds)
+        
+        else:
+            print("Unexpected situation")
+            assert False
+
+        # Now filter out the repeated images
+        unique_unhealthy_images = []
+
+        for i in range(len(images_unhealthy)):
+            if images_unhealthy[i] not in unique_unhealthy_images:
+                unique_unhealthy_images.append(images_unhealthy[i])
+
+        print("Number of unique images containing unhealthy lemon classes:", len(unique_unhealthy_images))
+
+        for i, im_file in enumerate([h_im['file_name'] for h_im in unique_unhealthy_images]):
+            image = cv2.imread('{}/{}'.format(dataDir, im_file))
+
+            # check to see if our preprocessors are not None
+            if self.preprocessors is not None:
+                # loop over the preprocessors and apply each to
+                # the image
+                for p in self.preprocessors:
+                    image = p.preprocess(image)
+
+            # treat our processed image as a  "feature vector"
+            # by updating the data list followed by the labels
+            data_unhealthy.append(image)
+            labels_unhealthy.append("unhealthy")
+
+            # show an update every 'verbose' images
+            if verbose > 0 and i > 0 and (i+1) % verbose == 0:
+                print("[INFO] processed {}/{}".format(i+1,
+                        len(unique_unhealthy_images)))
+
+        # Get healthy lemon images
+        # We assume healthy lemons are all the other images that are not unhealthy, obtained
+        # from above code.
+        data_healthy = []
+        labels_healthy = []
+        
+        all_imgIds = coco.getImgIds()
+        assert len(set(all_imgIds)) == len(all_imgIds)
+        
+        imgIds_for_unique_unhealthy_images = [img['id'] for img in unique_unhealthy_images]
+        assert len(set(imgIds_for_unique_unhealthy_images)) == len(imgIds_for_unique_unhealthy_images)
+        
+        A = set(all_imgIds)
+        B = set(imgIds_for_unique_unhealthy_images)
+        H = A.difference(B)
+
+        assert len(A) == 2690
+        assert len(B) + len(H) == len(A)
+
+        unique_healthy_images = coco.loadImgs(H)
+
+        print("Number of unique images containing healthy lemon classes:", len(unique_healthy_images))
+
+        for i, im_file in enumerate([h_im['file_name'] for h_im in unique_healthy_images]):
+            image = cv2.imread('{}/{}'.format(dataDir, im_file))
+
+            # check to see if our preprocessors are not None
+            if self.preprocessors is not None:
+                # loop over the preprocessors and apply each to
+                # the image
+                for p in self.preprocessors:
+                    image = p.preprocess(image)
+
+            # treat our processed image as a  "feature vector"
+            # by updating the data list followed by the labels
+            data_healthy.append(image)
+            labels_healthy.append("healthy")
+
+            # show an update every 'verbose' images
+            if verbose > 0 and i > 0 and (i+1) % verbose == 0:
+                print("[INFO] processed {}/{}".format(i+1,
+                        len(unique_healthy_images)))
+        
+        #################################################################################
+
+        data = data_healthy + data_unhealthy
+        labels = labels_healthy + labels_unhealthy
+
+        # return a tuple of the data and labels
+        return(np.array(data), np.array(labels))
+
+# construct the argument parser and parse the arguments
+# ap = argparse.ArgumentParser()
+# ap.add_argument("-d","--dataset", required=True,
+#     help="path to input dataset")
+# ap.add_argument("-k","--neighbors", type=int, default=1,
+#     help="# of nearest neighbors for classification")
+# ap.add_argument("-j","--jobs",type=int, default=-1,
+#     help="# of jobs for k-NN distance (-1 uses all available cores")
+# ap.add_argument("-c","--catalog", required=True,
+#     help="Please provide dataset catalog (COCO?, ImageNet?, etc...)")
+# args = vars(ap.parse_args())
+
+args = {'dataset' : "D:/Users/z3yn3/Desktop/bitirme/Bitirme code/lemon-dataset/lemon-dataset",
+        'neighbors': 2,
+        'jobs': 2,
+        'catalog':'COCO'}
+
+if args["catalog"] == "COCO":
+    
+    # grab the list of images that we'll be describing
+    print("[INFO] loading images...")
+    dataDir = args['dataset']
+
+    healthy_vs_unhealthy = {"healthy": ["condition"],
+                            "unhealthy": ["mould", "gangrene","dark_style_remains"]}
+    
+
+    # initialize the image preprocessor, load the dataset from disk,
+    # and reshape the data matrix
+    sp = SimplePreprocessor(256,256)
+    sdl = DatasetLoader(preprocessors=[sp])
+    (data, labels) = sdl.load(dataDir, healthy_vs_unhealthy, verbose=1)
+    data = data.reshape((data.shape[0]), 256*256*3)
+
+else:
+    raise Exception("{} is a(n) unexpected catalog of data. Program does not know how to handle data from this catalog.".format(args["catalog"]))
+
+# show some information on memory consumption of the images
+print("[INFO] features matrix: {:.1f}MB".format(
+    data.nbytes / (1024*1000.0)))
+
+# encode the labels as integers
+le = LabelEncoder()
+labels = le.fit_transform(labels)
+
+# partition the data into training and testing splits using 75% of
+# the data for training and the remaining 25% for testing
+(trainX, testX, trainY, testY) = train_test_split(data, labels,
+    test_size=0.25, random_state=42)
+
+# train and evaluate a k-NN classifier on the raw pixel intensities
+print("[INFO] evaluating k-NN classifier...")
+model = KNeighborsClassifier(n_neighbors=args["neighbors"],
+    n_jobs=args["jobs"])
+
+model.fit(trainX, trainY)
+print(classification_report(testY, model.predict(testX),
+    target_names=le.classes_))
+
+"""      2
+                 precision    recall  f1-score   support
+
+     healthy       0.80      0.94      0.86       417
+   unhealthy       0.86      0.61      0.72       256
+
+    accuracy                           0.82       673
+   macro avg       0.83      0.78      0.79       673
+weighted avg       0.82      0.82      0.81       673
+
+
+
+"""
