@@ -44,6 +44,7 @@ class DatasetLoader:
 
         ###################################################################
         ### NEW CODE
+        # coco used so rarely. 
         coco = COCO('{}/annotations/instances_default.json'.format(dataDir))
 
         # Load the categories in a variable
@@ -445,7 +446,7 @@ model.fit(trainX, trainY)
 print(classification_report(testY, model.predict(testX),
     target_names=le.classes_))
 
-"""      2
+"""Outcome""
                  precision    recall  f1-score   support
 
      healthy       0.80      0.94      0.86       417
